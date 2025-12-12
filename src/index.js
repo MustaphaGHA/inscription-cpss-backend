@@ -30,10 +30,12 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-// Get all clubs
+// Get all clubs (exclude hidden "Open" club)
 app.get("/api/clubs", async (req, res) => {
   try {
-    const [rows] = await pool.query("SELECT id, name FROM clubs ORDER BY name");
+    const [rows] = await pool.query(
+      "SELECT id, name FROM clubs WHERE name != 'Open' ORDER BY name"
+    );
     res.json(rows);
   } catch (error) {
     console.error("Error fetching clubs:", error);
@@ -123,6 +125,27 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
   const { athlete1, athlete2, isPair, locale } = req.body;
 
   try {
+    // Helper function to get club ID - if "Open" string, find the Open club ID
+    const getClubId = async (clubId) => {
+      if (clubId === "Open") {
+        const [openClub] = await pool.query(
+          "SELECT id FROM clubs WHERE name = 'Open' LIMIT 1"
+        );
+        if (openClub.length > 0) {
+          return openClub[0].id;
+        }
+        // If Open club doesn't exist, create it
+        const [result] = await pool.query(
+          "INSERT INTO clubs (name) VALUES ('Open')"
+        );
+        return result.insertId;
+      }
+      return clubId || null;
+    };
+
+    const athlete1ClubId = await getClubId(athlete1.clubId);
+    const athlete2ClubId = isPair ? await getClubId(athlete2.clubId) : null;
+
     const [result] = await pool.query(
       `INSERT INTO registrations (
         athlete1_last_name, athlete1_first_name, athlete1_birth_date,
@@ -138,7 +161,7 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
         athlete1.lastName,
         athlete1.firstName,
         athlete1.birthDate,
-        athlete1.clubId || null,
+        athlete1ClubId,
         athlete1.nationality,
         athlete1.gender,
         athlete1.email,
@@ -147,7 +170,7 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
         isPair ? athlete2.lastName : null,
         isPair ? athlete2.firstName : null,
         isPair ? athlete2.birthDate : null,
-        isPair && athlete2.clubId ? athlete2.clubId : null,
+        athlete2ClubId,
         isPair ? athlete2.nationality : null,
         isPair ? athlete2.gender : null,
         isPair ? athlete2.email : null,

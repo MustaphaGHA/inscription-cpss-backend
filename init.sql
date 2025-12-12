@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS registrations (
 
 -- Insert some default clubs
 INSERT IGNORE INTO clubs (name) VALUES 
+    ('Open'),
     ('CPSS - Club de Pêche Sportive de Sfax'),
     ('Fédération Tunisienne des Pêches Sportives'),
     ('Colmic Official Team'),
