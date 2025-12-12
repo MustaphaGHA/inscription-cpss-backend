@@ -30,6 +30,27 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
+// Check if email already exists in registrations
+app.get("/api/check-email", async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT COUNT(*) as count FROM registrations 
+       WHERE athlete1_email = ? OR athlete2_email = ?`,
+      [email.toLowerCase(), email.toLowerCase()]
+    );
+
+    res.json({ exists: rows[0].count > 0 });
+  } catch (error) {
+    console.error("Error checking email:", error);
+    res.status(500).json({ error: "Failed to check email" });
+  }
+});
+
 // Get all clubs (exclude hidden "Open" club)
 app.get("/api/clubs", async (req, res) => {
   try {
