@@ -96,7 +96,7 @@ const sendConfirmationEmail = async (athlete, isPair, partner, locale) => {
 
   try {
     const { data, error } = await resend.emails.send({
-      from: "Poisson d'Avril - CPSS <noreply@cpss-poissondavril.com>",
+      from: "CPSS Poisson d Avril <noreply@cpss-poissondavril.com>",
       to: athlete.email,
       subject: isFrench
         ? "Confirmation d'inscription au Poisson d'Avril 9ème édition"
