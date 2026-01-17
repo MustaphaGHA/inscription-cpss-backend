@@ -598,7 +598,7 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
 app.get("/api/admin/registrations", authenticateAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT r.id, r.registration_date,
+      SELECT r.id, r.registration_date, r.status,
              r.athlete1_last_name, r.athlete1_first_name, r.athlete1_birth_date,
              r.athlete1_club_id, r.athlete1_nationality, r.athlete1_gender,
              r.athlete1_email, r.athlete1_phone,
@@ -634,6 +634,33 @@ app.get("/api/admin/registrations", authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch registrations" });
   }
 });
+
+// Validate a registration (update status to confirmed)
+app.post(
+  "/api/admin/registrations/:id/validate",
+  authenticateAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const [result] = await pool.query(
+        `UPDATE registrations SET status = 'Inscription confirmée' WHERE id = ?`,
+        [id],
+      );
+
+      if (result.affectedRows === 0) {
+        return res.status(404).json({ error: "Registration not found" });
+      }
+
+      res.json({
+        success: true,
+        message: "Registration validated successfully",
+      });
+    } catch (error) {
+      console.error("Error validating registration:", error);
+      res.status(500).json({ error: "Failed to validate registration" });
+    }
+  },
+);
 
 // Recalculate auto-fields for all registrations (admin endpoint)
 app.post(
