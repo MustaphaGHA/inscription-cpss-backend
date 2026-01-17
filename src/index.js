@@ -3,10 +3,115 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const mysql = require("mysql2/promise");
+const nodemailer = require("nodemailer");
 const { body, validationResult } = require("express-validator");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Email transporter configuration
+const transporter = nodemailer.createTransport({
+  host: "mail.cpss-poissondavril.com",
+  port: 465,
+  secure: true,
+  auth: {
+    user: "contact@cpss-poissondavril.com",
+    pass: process.env.EMAIL_PASSWORD || "MonCtt-123",
+  },
+});
+
+// Email template for confirmation
+const getConfirmationEmailHtml = (athlete, isPair, partner, locale) => {
+  const isFrench = locale === "fr";
+  
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #1a2744; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #1a2744; color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background-color: #f5f5f5; padding: 30px; border-radius: 0 0 10px 10px; }
+        .highlight { color: #c92536; font-weight: bold; }
+        .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+        .info-box { background-color: white; padding: 15px; border-radius: 8px; margin: 15px 0; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>${isFrench ? "Confirmation d'inscription" : "Registration Confirmation"}</h1>
+          <h2>Poisson d'Avril - 9ème Édition</h2>
+        </div>
+        <div class="content">
+          <p>${isFrench ? "Cher(e)" : "Dear"} <strong>${athlete.firstName} ${athlete.lastName}</strong>,</p>
+          
+          <p>${isFrench 
+            ? "Nous avons le plaisir de vous confirmer que votre inscription au <span class='highlight'>9ème Trophée International de Surfcasting Poisson d'Avril</span> a été enregistrée avec succès."
+            : "We are pleased to confirm that your registration for the <span class='highlight'>9th Poisson d'Avril International Surfcasting Trophy</span> has been successfully recorded."
+          }</p>
+          
+          <div class="info-box">
+            <h3>${isFrench ? "Détails de l'événement" : "Event Details"}</h3>
+            <p>📅 <strong>${isFrench ? "Date" : "Date"}:</strong> 01 & 02 ${isFrench ? "Mai" : "May"} 2026</p>
+            <p>📍 <strong>${isFrench ? "Lieu" : "Location"}:</strong> Hammamet-Sud, Bouficha, ${isFrench ? "Tunisie" : "Tunisia"}</p>
+            <p>💰 <strong>${isFrench ? "Tarif" : "Price"}:</strong> 450DT / 140€</p>
+          </div>
+          
+          ${isPair && partner ? `
+            <div class="info-box">
+              <h3>${isFrench ? "Votre partenaire" : "Your Partner"}</h3>
+              <p><strong>${partner.firstName} ${partner.lastName}</strong></p>
+            </div>
+          ` : ""}
+          
+          <p>${isFrench 
+            ? "Les tickets seront disponibles chez nos points de vente publiés sur notre page Facebook."
+            : "Tickets will be available at our points of sale published on our Facebook page."
+          }</p>
+          
+          <p>${isFrench 
+            ? "Pour toute question, n'hésitez pas à nous contacter via WhatsApp :"
+            : "For any questions, feel free to contact us via WhatsApp:"
+          }</p>
+          <p>📱 Bouch: +216 97 475 628<br>📱 Walid: +216 54 157 440</p>
+          
+          <p>${isFrench ? "À très bientôt !" : "See you soon!"}</p>
+          <p><strong>${isFrench ? "L'équipe CPSS" : "The CPSS Team"}</strong></p>
+        </div>
+        <div class="footer">
+          <p>© 2026 CPSS - Club de Pêche Sportive de Sfax</p>
+          <p>contact@cpss-poissondavril.com</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+};
+
+// Function to send confirmation email
+const sendConfirmationEmail = async (athlete, isPair, partner, locale) => {
+  const isFrench = locale === "fr";
+  
+  const mailOptions = {
+    from: '"Poisson d\'Avril - CPSS" <contact@cpss-poissondavril.com>',
+    to: athlete.email,
+    subject: isFrench 
+      ? "Confirmation d'inscription au Poisson d'Avril 9ème édition"
+      : "Registration Confirmation - Poisson d'Avril 9th Edition",
+    html: getConfirmationEmailHtml(athlete, isPair, partner, locale),
+  };
+  
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Confirmation email sent to ${athlete.email}`);
+  } catch (error) {
+    console.error(`Failed to send email to ${athlete.email}:`, error);
+    // Don't throw - we don't want to fail the registration if email fails
+  }
+};
 
 // Database connection pool
 const pool = mysql.createPool({
@@ -168,7 +273,8 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
     return res.status(400).json({ errors: errors.array() });
   }
 
-  const { athlete1, athlete2, isPair, locale, teamPhoto, teamPhotoType } = req.body;
+  const { athlete1, athlete2, isPair, locale, teamPhoto, teamPhotoType } =
+    req.body;
 
   try {
     // Helper function to get club ID - if "Open" string, find the Open club ID
@@ -240,6 +346,14 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
       registrationId: result.insertId,
       message: "Registration successful",
     });
+
+    // Send confirmation emails (don't await - send in background)
+    sendConfirmationEmail(athlete1, isPair, isPair ? athlete2 : null, locale || "fr");
+    
+    // If pair, send email to athlete2 as well
+    if (isPair && athlete2 && athlete2.email) {
+      sendConfirmationEmail(athlete2, isPair, athlete1, locale || "fr");
+    }
   } catch (error) {
     console.error("Error creating registration:", error);
     res.status(500).json({ error: "Failed to create registration" });
