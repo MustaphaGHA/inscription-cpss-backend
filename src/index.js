@@ -246,17 +246,35 @@ const calculateMosaique = (athlete1, athlete2, isPair) => {
 };
 
 // Calculate Mixte field
-// True when: Male + Female pair
-const calculateMixte = (athlete1Gender, athlete2Gender, isPair) => {
+// True when:
+// - Club1 different from Club2
+// - One club is "Open" and the other is not
+// False when: Both clubs are the same and not "Open"
+const calculateMixte = (club1Name, club2Name, isPair) => {
   if (!isPair) {
     return false; // Single athlete cannot be mixte
   }
 
-  // Male + Female = true
-  return (
-    (athlete1Gender === "male" && athlete2Gender === "female") ||
-    (athlete1Gender === "female" && athlete2Gender === "male")
-  );
+  // Normalize club names
+  const club1 = (club1Name || "").toLowerCase().trim();
+  const club2 = (club2Name || "").toLowerCase().trim();
+
+  const isOpen1 = club1 === "open";
+  const isOpen2 = club2 === "open";
+
+  // Both are Open: false
+  if (isOpen1 && isOpen2) {
+    return false;
+  }
+
+  // One is Open and the other is not: true
+  if (isOpen1 !== isOpen2) {
+    return true;
+  }
+
+  // Both are not Open: check if different clubs
+  // Different clubs: true, Same clubs: false
+  return club1 !== club2;
 };
 
 // Middleware
@@ -464,6 +482,18 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
     const athlete1ClubId = await getClubId(athlete1.clubId);
     const athlete2ClubId = isPair ? await getClubId(athlete2.clubId) : null;
 
+    // Get club names for mixte calculation
+    const getClubName = async (clubId) => {
+      if (!clubId) return null;
+      const [clubs] = await pool.query("SELECT name FROM clubs WHERE id = ?", [
+        clubId,
+      ]);
+      return clubs.length > 0 ? clubs[0].name : null;
+    };
+
+    const athlete1ClubName = await getClubName(athlete1ClubId);
+    const athlete2ClubName = isPair ? await getClubName(athlete2ClubId) : null;
+
     // Convert base64 image to Buffer if provided
     let photoBuffer = null;
     if (teamPhoto) {
@@ -485,11 +515,7 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
       isPair,
     );
 
-    const mixte = calculateMixte(
-      athlete1.gender,
-      isPair ? athlete2.gender : null,
-      isPair,
-    );
+    const mixte = calculateMixte(athlete1ClubName, athlete2ClubName, isPair);
 
     const [result] = await pool.query(
       `INSERT INTO registrations (
@@ -599,11 +625,14 @@ app.post(
     try {
       // Get all registrations that need recalculation (where fields are NULL)
       const [rows] = await pool.query(`
-      SELECT id, athlete1_nationality, athlete1_gender, athlete1_birth_date,
-             is_pair, athlete2_nationality, athlete2_gender, athlete2_birth_date,
-             etranger, mosaique, mixte
-      FROM registrations
-      WHERE etranger IS NULL OR mosaique IS NULL OR mixte IS NULL
+      SELECT r.id, r.athlete1_nationality, r.athlete1_gender, r.athlete1_birth_date,
+             r.is_pair, r.athlete2_nationality, r.athlete2_gender, r.athlete2_birth_date,
+             r.etranger, r.mosaique, r.mixte,
+             c1.name as athlete1_club_name, c2.name as athlete2_club_name
+      FROM registrations r
+      LEFT JOIN clubs c1 ON r.athlete1_club_id = c1.id
+      LEFT JOIN clubs c2 ON r.athlete2_club_id = c2.id
+      WHERE r.etranger IS NULL OR r.mosaique IS NULL OR r.mixte IS NULL
     `);
 
       let updatedCount = 0;
@@ -632,8 +661,8 @@ app.post(
         const mosaique = calculateMosaique(athlete1, athlete2, row.is_pair);
 
         const mixte = calculateMixte(
-          athlete1.gender,
-          athlete2 ? athlete2.gender : null,
+          row.athlete1_club_name,
+          row.athlete2_club_name,
           row.is_pair,
         );
 
@@ -665,9 +694,12 @@ app.post(
     try {
       // Get ALL registrations
       const [rows] = await pool.query(`
-      SELECT id, athlete1_nationality, athlete1_gender, athlete1_birth_date,
-             is_pair, athlete2_nationality, athlete2_gender, athlete2_birth_date
-      FROM registrations
+      SELECT r.id, r.athlete1_nationality, r.athlete1_gender, r.athlete1_birth_date,
+             r.is_pair, r.athlete2_nationality, r.athlete2_gender, r.athlete2_birth_date,
+             c1.name as athlete1_club_name, c2.name as athlete2_club_name
+      FROM registrations r
+      LEFT JOIN clubs c1 ON r.athlete1_club_id = c1.id
+      LEFT JOIN clubs c2 ON r.athlete2_club_id = c2.id
     `);
 
       let updatedCount = 0;
@@ -696,8 +728,8 @@ app.post(
         const mosaique = calculateMosaique(athlete1, athlete2, row.is_pair);
 
         const mixte = calculateMixte(
-          athlete1.gender,
-          athlete2 ? athlete2.gender : null,
+          row.athlete1_club_name,
+          row.athlete2_club_name,
           row.is_pair,
         );
 
