@@ -48,7 +48,7 @@ const getConfirmationEmailHtml = (athlete, isPair, partner, locale) => {
           
           <div class="info-box">
             <h3>${isFrench ? "Détails de l'événement" : "Event Details"}</h3>
-            <p>📅 <strong>${isFrench ? "Date" : "Date"}:</strong> 01 & 02 ${isFrench ? "Mai" : "May"} 2026</p>
+            <p>📅 <strong>${isFrench ? "Date" : "Date"}:</strong> 30 ${isFrench ? "Avril" : "April"} & 01 & 02 ${isFrench ? "Mai" : "May"} 2026</p>
             <p>📍 <strong>${isFrench ? "Lieu" : "Location"}:</strong> Hammamet-Sud, Bouficha, ${isFrench ? "Tunisie" : "Tunisia"}</p>
             <p>💰 <strong>${isFrench ? "Tarif" : "Price"}:</strong> 450DT / 140€</p>
           </div>
