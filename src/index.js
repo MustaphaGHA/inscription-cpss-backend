@@ -428,13 +428,15 @@ app.get("/api/admin/registrations", authenticateAdmin, async (req, res) => {
       LEFT JOIN clubs c2 ON r.athlete2_club_id = c2.id
       ORDER BY r.registration_date DESC
     `);
-    
+
     // Convert team_photo buffer to base64 for frontend display
-    const rowsWithBase64 = rows.map(row => ({
+    const rowsWithBase64 = rows.map((row) => ({
       ...row,
-      team_photo: row.team_photo ? `data:${row.team_photo_type || 'image/jpeg'};base64,${row.team_photo.toString('base64')}` : null
+      team_photo: row.team_photo
+        ? `data:${row.team_photo_type || "image/jpeg"};base64,${row.team_photo.toString("base64")}`
+        : null,
     }));
-    
+
     res.json(rowsWithBase64);
   } catch (error) {
     console.error("Error fetching registrations:", error);
