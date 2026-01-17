@@ -635,6 +635,130 @@ app.get("/api/admin/registrations", authenticateAdmin, async (req, res) => {
   }
 });
 
+// Email template for validation confirmation
+const getValidationConfirmationEmailHtml = (
+  athlete,
+  isPair,
+  partner,
+  locale,
+) => {
+  const isFrench = locale === "fr";
+
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #1a2744; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #1a2744; color: white; padding: 20px; text-align: center; border-radius: 10px 10px 0 0; }
+        .content { background-color: #f5f5f5; padding: 30px; border-radius: 0 0 10px 10px; }
+        .highlight { color: #28a745; font-weight: bold; }
+        .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+        .info-box { background-color: white; padding: 15px; border-radius: 8px; margin: 15px 0; }
+        .success-badge { background-color: #28a745; color: white; padding: 10px 20px; border-radius: 25px; display: inline-block; font-weight: bold; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>${isFrench ? "Inscription Confirmée" : "Registration Confirmed"}</h1>
+          <h2>Poisson d'Avril - 9ème Édition</h2>
+        </div>
+        <div class="content">
+          <p>${isFrench ? "Cher(e)" : "Dear"} <strong>${athlete.firstName} ${athlete.lastName}</strong>,</p>
+          
+          <p style="text-align: center;">
+            <span class="success-badge">✓ ${isFrench ? "INSCRIPTION CONFIRMÉE" : "REGISTRATION CONFIRMED"}</span>
+          </p>
+          
+          <p>${
+            isFrench
+              ? "Nous avons le plaisir de vous confirmer que votre inscription au <span class='highlight'>9ème Trophée International de Surfcasting Poisson d'Avril</span> a été officiellement validée."
+              : "We are pleased to confirm that your registration for the <span class='highlight'>9th Poisson d'Avril International Surfcasting Trophy</span> has been officially validated."
+          }</p>
+          
+          <div class="info-box">
+            <h3>${isFrench ? "Détails de l'événement" : "Event Details"}</h3>
+            <p>📅 <strong>${isFrench ? "Date" : "Date"}:</strong> 30 ${isFrench ? "Avril" : "April"} & 01 & 02 ${isFrench ? "Mai" : "May"} 2026</p>
+            <p>📍 <strong>${isFrench ? "Lieu" : "Location"}:</strong> Hammamet-Sud, Bouficha, ${isFrench ? "Tunisie" : "Tunisia"}</p>
+          </div>
+          
+          ${
+            isPair && partner
+              ? `
+            <div class="info-box">
+              <h3>${isFrench ? "Votre partenaire" : "Your Partner"}</h3>
+              <p><strong>${partner.firstName} ${partner.lastName}</strong></p>
+            </div>
+          `
+              : ""
+          }
+          
+          <p>${
+            isFrench
+              ? "Pour toute question, n'hésitez pas à nous contacter via WhatsApp :"
+              : "For any questions, feel free to contact us via WhatsApp:"
+          }</p>
+          <p>📱 Bouch: +216 97 475 628<br>📱 Walid: +216 54 157 440</p>
+          
+          <p>${isFrench ? "À très bientôt !" : "See you soon!"}</p>
+          <p><strong>${isFrench ? "L'équipe CPSS" : "The CPSS Team"}</strong></p>
+        </div>
+        <div class="footer">
+          <p>© 2026 CPSS - Club de Pêche Sportive de Sfax</p>
+          <p>contact@cpss-poissondavril.com</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+};
+
+// Function to send validation confirmation email
+const sendValidationConfirmationEmail = async (
+  athlete,
+  isPair,
+  partner,
+  locale,
+) => {
+  const isFrench = locale === "fr";
+
+  try {
+    const { data, error } = await resend.emails.send({
+      from: "CPSS Poisson d Avril <noreply@cpss-poissondavril.com>",
+      to: athlete.email,
+      subject: isFrench
+        ? "✓ Inscription Confirmée - Poisson d'Avril 9ème édition"
+        : "✓ Registration Confirmed - Poisson d'Avril 9th Edition",
+      html: getValidationConfirmationEmailHtml(
+        athlete,
+        isPair,
+        partner,
+        locale,
+      ),
+    });
+
+    if (error) {
+      console.error(
+        `Failed to send validation email to ${athlete.email}:`,
+        error,
+      );
+    } else {
+      console.log(
+        `Validation confirmation email sent to ${athlete.email}`,
+        data,
+      );
+    }
+  } catch (error) {
+    console.error(
+      `Failed to send validation email to ${athlete.email}:`,
+      error,
+    );
+  }
+};
+
 // Validate a registration (update status to confirmed)
 app.post(
   "/api/admin/registrations/:id/validate",
@@ -642,8 +766,80 @@ app.post(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const [result] = await pool.query(
+
+      // Fetch registration details for email
+      const [registrations] = await pool.query(
+        `SELECT athlete1_first_name, athlete1_last_name, athlete1_email,
+                athlete2_first_name, athlete2_last_name, athlete2_email,
+                is_pair, locale
+         FROM registrations WHERE id = ?`,
+        [id],
+      );
+
+      if (registrations.length === 0) {
+        return res.status(404).json({ error: "Registration not found" });
+      }
+
+      const reg = registrations[0];
+
+      // Update status
+      await pool.query(
         `UPDATE registrations SET status = 'Inscription confirmée' WHERE id = ?`,
+        [id],
+      );
+
+      res.json({
+        success: true,
+        message: "Registration validated successfully",
+      });
+
+      // Send confirmation emails (don't await - send in background)
+      const athlete1 = {
+        firstName: reg.athlete1_first_name,
+        lastName: reg.athlete1_last_name,
+        email: reg.athlete1_email,
+      };
+
+      const athlete2 = reg.is_pair
+        ? {
+            firstName: reg.athlete2_first_name,
+            lastName: reg.athlete2_last_name,
+            email: reg.athlete2_email,
+          }
+        : null;
+
+      sendValidationConfirmationEmail(
+        athlete1,
+        reg.is_pair,
+        athlete2,
+        reg.locale || "fr",
+      );
+
+      // Send to athlete2 if pair
+      if (reg.is_pair && athlete2 && athlete2.email) {
+        sendValidationConfirmationEmail(
+          athlete2,
+          reg.is_pair,
+          athlete1,
+          reg.locale || "fr",
+        );
+      }
+    } catch (error) {
+      console.error("Error validating registration:", error);
+      res.status(500).json({ error: "Failed to validate registration" });
+    }
+  },
+);
+
+// Invalidate a registration (change status back to pending)
+app.post(
+  "/api/admin/registrations/:id/invalidate",
+  authenticateAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const [result] = await pool.query(
+        `UPDATE registrations SET status = 'pending' WHERE id = ?`,
         [id],
       );
 
@@ -653,11 +849,11 @@ app.post(
 
       res.json({
         success: true,
-        message: "Registration validated successfully",
+        message: "Registration invalidated successfully",
       });
     } catch (error) {
-      console.error("Error validating registration:", error);
-      res.status(500).json({ error: "Failed to validate registration" });
+      console.error("Error invalidating registration:", error);
+      res.status(500).json({ error: "Failed to invalidate registration" });
     }
   },
 );
