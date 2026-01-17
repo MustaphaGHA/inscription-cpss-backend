@@ -135,6 +135,130 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
+// Competition date for age calculation (May 1st, 2026)
+const COMPETITION_DATE = new Date("2026-05-01");
+
+// Helper function to check if nationality is Tunisian
+const isTunisian = (nationality) => {
+  if (!nationality) return false;
+  const tunisianValues = ["tunisia", "tunisie", "tn", "tunisian"];
+  return tunisianValues.includes(nationality.toLowerCase());
+};
+
+// Helper function to calculate age on competition date
+const calculateAgeOnCompetition = (birthDate) => {
+  if (!birthDate) return null;
+  const birth = new Date(birthDate);
+  let age = COMPETITION_DATE.getFullYear() - birth.getFullYear();
+  const monthDiff = COMPETITION_DATE.getMonth() - birth.getMonth();
+  if (
+    monthDiff < 0 ||
+    (monthDiff === 0 && COMPETITION_DATE.getDate() < birth.getDate())
+  ) {
+    age--;
+  }
+  return age;
+};
+
+// Calculate Etranger field
+// - Single athlete: Tunisian = false, non-Tunisian = true
+// - Pair: Both non-Tunisian = true, otherwise false
+const calculateEtranger = (
+  athlete1Nationality,
+  athlete2Nationality,
+  isPair,
+) => {
+  const athlete1IsTunisian = isTunisian(athlete1Nationality);
+
+  if (!isPair) {
+    // Single athlete
+    return !athlete1IsTunisian;
+  }
+
+  // Pair
+  const athlete2IsTunisian = isTunisian(athlete2Nationality);
+  // Both non-Tunisian = true, otherwise false
+  return !athlete1IsTunisian && !athlete2IsTunisian;
+};
+
+// Calculate Mosaique field
+// True when:
+// - Single athlete (no pair)
+// - Male + Female
+// - Female + Female
+// - Young + Adult (young ≤20, adult >20)
+// - 2 Young
+// - 2 Adults of different nationalities
+const calculateMosaique = (athlete1, athlete2, isPair) => {
+  // Single athlete: always true
+  if (!isPair) {
+    return true;
+  }
+
+  const gender1 = athlete1.gender;
+  const gender2 = athlete2.gender;
+
+  // Male + Female: true
+  if (
+    (gender1 === "male" && gender2 === "female") ||
+    (gender1 === "female" && gender2 === "male")
+  ) {
+    return true;
+  }
+
+  // Female + Female: true
+  if (gender1 === "female" && gender2 === "female") {
+    return true;
+  }
+
+  // Calculate ages
+  const age1 = calculateAgeOnCompetition(athlete1.birthDate);
+  const age2 = calculateAgeOnCompetition(athlete2.birthDate);
+
+  if (age1 === null || age2 === null) {
+    return false;
+  }
+
+  const isYoung1 = age1 <= 20;
+  const isYoung2 = age2 <= 20;
+
+  // Young + Adult: true
+  if ((isYoung1 && !isYoung2) || (!isYoung1 && isYoung2)) {
+    return true;
+  }
+
+  // 2 Young: true
+  if (isYoung1 && isYoung2) {
+    return true;
+  }
+
+  // 2 Adults of different nationalities: true
+  if (!isYoung1 && !isYoung2) {
+    const nat1 = (athlete1.nationality || "").toLowerCase();
+    const nat2 = (athlete2.nationality || "").toLowerCase();
+    if (nat1 !== nat2) {
+      return true;
+    }
+  }
+
+  // Otherwise: false (2 adult males of same nationality)
+  return false;
+};
+
+// Calculate Mixte field
+// True when: Male + Female pair
+const calculateMixte = (athlete1Gender, athlete2Gender, isPair) => {
+  if (!isPair) {
+    return false; // Single athlete cannot be mixte
+  }
+
+  // Male + Female = true
+  return (
+    (athlete1Gender === "male" && athlete2Gender === "female") ||
+    (athlete1Gender === "female" && athlete2Gender === "male")
+  );
+};
+
 // Middleware
 app.use(helmet());
 app.use(cors());
@@ -348,6 +472,25 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
       photoBuffer = Buffer.from(base64Data, "base64");
     }
 
+    // Calculate the auto-fields
+    const etranger = calculateEtranger(
+      athlete1.nationality,
+      isPair ? athlete2.nationality : null,
+      isPair,
+    );
+
+    const mosaique = calculateMosaique(
+      athlete1,
+      isPair ? athlete2 : null,
+      isPair,
+    );
+
+    const mixte = calculateMixte(
+      athlete1.gender,
+      isPair ? athlete2.gender : null,
+      isPair,
+    );
+
     const [result] = await pool.query(
       `INSERT INTO registrations (
         athlete1_last_name, athlete1_first_name, athlete1_birth_date,
@@ -357,8 +500,9 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
         athlete2_last_name, athlete2_first_name, athlete2_birth_date,
         athlete2_club_id, athlete2_nationality, athlete2_gender,
         athlete2_email, athlete2_phone,
-        locale, team_photo, team_photo_type
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        locale, team_photo, team_photo_type,
+        etranger, mosaique, mixte
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         athlete1.lastName,
         athlete1.firstName,
@@ -380,6 +524,9 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
         locale || "fr",
         photoBuffer,
         teamPhotoType || null,
+        etranger,
+        mosaique,
+        mixte,
       ],
     );
 
@@ -443,6 +590,136 @@ app.get("/api/admin/registrations", authenticateAdmin, async (req, res) => {
     res.status(500).json({ error: "Failed to fetch registrations" });
   }
 });
+
+// Recalculate auto-fields for all registrations (admin endpoint)
+app.post(
+  "/api/admin/recalculate-fields",
+  authenticateAdmin,
+  async (req, res) => {
+    try {
+      // Get all registrations that need recalculation (where fields are NULL)
+      const [rows] = await pool.query(`
+      SELECT id, athlete1_nationality, athlete1_gender, athlete1_birth_date,
+             is_pair, athlete2_nationality, athlete2_gender, athlete2_birth_date,
+             etranger, mosaique, mixte
+      FROM registrations
+      WHERE etranger IS NULL OR mosaique IS NULL OR mixte IS NULL
+    `);
+
+      let updatedCount = 0;
+
+      for (const row of rows) {
+        const athlete1 = {
+          nationality: row.athlete1_nationality,
+          gender: row.athlete1_gender,
+          birthDate: row.athlete1_birth_date,
+        };
+
+        const athlete2 = row.is_pair
+          ? {
+              nationality: row.athlete2_nationality,
+              gender: row.athlete2_gender,
+              birthDate: row.athlete2_birth_date,
+            }
+          : null;
+
+        const etranger = calculateEtranger(
+          athlete1.nationality,
+          athlete2 ? athlete2.nationality : null,
+          row.is_pair,
+        );
+
+        const mosaique = calculateMosaique(athlete1, athlete2, row.is_pair);
+
+        const mixte = calculateMixte(
+          athlete1.gender,
+          athlete2 ? athlete2.gender : null,
+          row.is_pair,
+        );
+
+        await pool.query(
+          `UPDATE registrations SET etranger = ?, mosaique = ?, mixte = ? WHERE id = ?`,
+          [etranger, mosaique, mixte, row.id],
+        );
+
+        updatedCount++;
+      }
+
+      res.json({
+        success: true,
+        message: `Recalculated fields for ${updatedCount} registrations`,
+        updatedCount,
+      });
+    } catch (error) {
+      console.error("Error recalculating fields:", error);
+      res.status(500).json({ error: "Failed to recalculate fields" });
+    }
+  },
+);
+
+// Force recalculate ALL registrations (admin endpoint)
+app.post(
+  "/api/admin/recalculate-all-fields",
+  authenticateAdmin,
+  async (req, res) => {
+    try {
+      // Get ALL registrations
+      const [rows] = await pool.query(`
+      SELECT id, athlete1_nationality, athlete1_gender, athlete1_birth_date,
+             is_pair, athlete2_nationality, athlete2_gender, athlete2_birth_date
+      FROM registrations
+    `);
+
+      let updatedCount = 0;
+
+      for (const row of rows) {
+        const athlete1 = {
+          nationality: row.athlete1_nationality,
+          gender: row.athlete1_gender,
+          birthDate: row.athlete1_birth_date,
+        };
+
+        const athlete2 = row.is_pair
+          ? {
+              nationality: row.athlete2_nationality,
+              gender: row.athlete2_gender,
+              birthDate: row.athlete2_birth_date,
+            }
+          : null;
+
+        const etranger = calculateEtranger(
+          athlete1.nationality,
+          athlete2 ? athlete2.nationality : null,
+          row.is_pair,
+        );
+
+        const mosaique = calculateMosaique(athlete1, athlete2, row.is_pair);
+
+        const mixte = calculateMixte(
+          athlete1.gender,
+          athlete2 ? athlete2.gender : null,
+          row.is_pair,
+        );
+
+        await pool.query(
+          `UPDATE registrations SET etranger = ?, mosaique = ?, mixte = ? WHERE id = ?`,
+          [etranger, mosaique, mixte, row.id],
+        );
+
+        updatedCount++;
+      }
+
+      res.json({
+        success: true,
+        message: `Force recalculated fields for ${updatedCount} registrations`,
+        updatedCount,
+      });
+    } catch (error) {
+      console.error("Error recalculating all fields:", error);
+      res.status(500).json({ error: "Failed to recalculate all fields" });
+    }
+  },
+);
 
 // Start server
 app.listen(PORT, "0.0.0.0", () => {
