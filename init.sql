@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS registrations (
     registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status VARCHAR(50) DEFAULT 'pending',
     locale VARCHAR(5) DEFAULT 'fr',
+    team_photo LONGBLOB,
+    team_photo_type VARCHAR(100),
     
     -- Foreign keys
     FOREIGN KEY (athlete1_club_id) REFERENCES clubs(id),

@@ -23,7 +23,7 @@ const pool = mysql.createPool({
 // Middleware
 app.use(helmet());
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: "10mb" })); // Increased limit for image upload
 
 // Health check
 app.get("/api/health", (req, res) => {
@@ -41,7 +41,7 @@ app.get("/api/check-email", async (req, res) => {
     const [rows] = await pool.query(
       `SELECT COUNT(*) as count FROM registrations 
        WHERE athlete1_email = ? OR athlete2_email = ?`,
-      [email.toLowerCase(), email.toLowerCase()]
+      [email.toLowerCase(), email.toLowerCase()],
     );
 
     res.json({ exists: rows[0].count > 0 });
@@ -51,11 +51,36 @@ app.get("/api/check-email", async (req, res) => {
   }
 });
 
+// Check if phone already exists in registrations
+app.get("/api/check-phone", async (req, res) => {
+  try {
+    const { phone } = req.query;
+    if (!phone) {
+      return res.status(400).json({ error: "Phone is required" });
+    }
+
+    // Normalize phone number by removing spaces and special characters
+    const normalizedPhone = phone.replace(/[\s\-\(\)]/g, "");
+
+    const [rows] = await pool.query(
+      `SELECT COUNT(*) as count FROM registrations 
+       WHERE REPLACE(REPLACE(REPLACE(REPLACE(athlete1_phone, ' ', ''), '-', ''), '(', ''), ')', '') = ? 
+       OR REPLACE(REPLACE(REPLACE(REPLACE(athlete2_phone, ' ', ''), '-', ''), '(', ''), ')', '') = ?`,
+      [normalizedPhone, normalizedPhone],
+    );
+
+    res.json({ exists: rows[0].count > 0 });
+  } catch (error) {
+    console.error("Error checking phone:", error);
+    res.status(500).json({ error: "Failed to check phone" });
+  }
+});
+
 // Get all clubs (exclude hidden "Open" club)
 app.get("/api/clubs", async (req, res) => {
   try {
     const [rows] = await pool.query(
-      "SELECT id, name FROM clubs WHERE name != 'Open' ORDER BY name"
+      "SELECT id, name FROM clubs WHERE name != 'Open' ORDER BY name",
     );
     res.json(rows);
   } catch (error) {
@@ -79,7 +104,7 @@ app.post(
       // Check if club exists
       const [existing] = await pool.query(
         "SELECT id, name FROM clubs WHERE name = ?",
-        [name]
+        [name],
       );
       if (existing.length > 0) {
         return res.status(201).json(existing[0]);
@@ -93,7 +118,7 @@ app.post(
       console.error("Error adding club:", error);
       res.status(500).json({ error: "Failed to add club" });
     }
-  }
+  },
 );
 
 // Validation middleware for registration
@@ -143,21 +168,21 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
     return res.status(400).json({ errors: errors.array() });
   }
 
-  const { athlete1, athlete2, isPair, locale } = req.body;
+  const { athlete1, athlete2, isPair, locale, teamPhoto, teamPhotoType } = req.body;
 
   try {
     // Helper function to get club ID - if "Open" string, find the Open club ID
     const getClubId = async (clubId) => {
       if (clubId === "Open") {
         const [openClub] = await pool.query(
-          "SELECT id FROM clubs WHERE name = 'Open' LIMIT 1"
+          "SELECT id FROM clubs WHERE name = 'Open' LIMIT 1",
         );
         if (openClub.length > 0) {
           return openClub[0].id;
         }
         // If Open club doesn't exist, create it
         const [result] = await pool.query(
-          "INSERT INTO clubs (name) VALUES ('Open')"
+          "INSERT INTO clubs (name) VALUES ('Open')",
         );
         return result.insertId;
       }
@@ -166,6 +191,14 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
 
     const athlete1ClubId = await getClubId(athlete1.clubId);
     const athlete2ClubId = isPair ? await getClubId(athlete2.clubId) : null;
+
+    // Convert base64 image to Buffer if provided
+    let photoBuffer = null;
+    if (teamPhoto) {
+      // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
+      const base64Data = teamPhoto.replace(/^data:image\/\w+;base64,/, "");
+      photoBuffer = Buffer.from(base64Data, "base64");
+    }
 
     const [result] = await pool.query(
       `INSERT INTO registrations (
@@ -176,8 +209,8 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
         athlete2_last_name, athlete2_first_name, athlete2_birth_date,
         athlete2_club_id, athlete2_nationality, athlete2_gender,
         athlete2_email, athlete2_phone,
-        locale
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        locale, team_photo, team_photo_type
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         athlete1.lastName,
         athlete1.firstName,
@@ -197,7 +230,9 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
         isPair ? athlete2.email : null,
         isPair ? athlete2.phone : null,
         locale || "fr",
-      ]
+        photoBuffer,
+        teamPhotoType || null,
+      ],
     );
 
     res.status(201).json({
