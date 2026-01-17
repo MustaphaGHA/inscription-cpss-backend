@@ -3,11 +3,19 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const mysql = require("mysql2/promise");
+const crypto = require("crypto");
 const { Resend } = require("resend");
 const { body, validationResult } = require("express-validator");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Admin password from environment
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+
+// Simple token generation and validation
+const generateToken = () => crypto.randomBytes(32).toString("hex");
+const adminTokens = new Set(); // In-memory token storage (consider Redis for production)
 
 // Resend configuration
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -135,6 +143,38 @@ app.use(express.json({ limit: "10mb" })); // Increased limit for image upload
 // Health check
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
+});
+
+// Admin authentication middleware
+const authenticateAdmin = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const token = authHeader.split(" ")[1];
+  if (!adminTokens.has(token)) {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+  next();
+};
+
+// Admin login
+app.post("/api/admin/login", (req, res) => {
+  const { password } = req.body;
+  if (password === ADMIN_PASSWORD) {
+    const token = generateToken();
+    adminTokens.add(token);
+    res.json({ success: true, token });
+  } else {
+    res.status(401).json({ error: "Mot de passe incorrect" });
+  }
+});
+
+// Admin logout
+app.post("/api/admin/logout", authenticateAdmin, (req, res) => {
+  const token = req.headers.authorization.split(" ")[1];
+  adminTokens.delete(token);
+  res.json({ success: true });
 });
 
 // Check if email already exists in registrations
@@ -367,11 +407,20 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
   }
 });
 
-// Get all registrations (admin endpoint)
-app.get("/api/registrations", async (req, res) => {
+// Get all registrations (admin endpoint - protected)
+app.get("/api/admin/registrations", authenticateAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query(`
-      SELECT r.*, 
+      SELECT r.id, r.registration_date,
+             r.athlete1_last_name, r.athlete1_first_name, r.athlete1_birth_date,
+             r.athlete1_club_id, r.athlete1_nationality, r.athlete1_gender,
+             r.athlete1_email, r.athlete1_phone,
+             r.is_pair,
+             r.athlete2_last_name, r.athlete2_first_name, r.athlete2_birth_date,
+             r.athlete2_club_id, r.athlete2_nationality, r.athlete2_gender,
+             r.athlete2_email, r.athlete2_phone,
+             r.locale, r.team_photo_type,
+             r.mixte, r.mosaique,
              c1.name as athlete1_club_name,
              c2.name as athlete2_club_name
       FROM registrations r
