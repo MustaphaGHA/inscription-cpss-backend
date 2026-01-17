@@ -457,8 +457,16 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
     return res.status(400).json({ errors: errors.array() });
   }
 
-  const { athlete1, athlete2, isPair, locale, teamPhoto, teamPhotoType } =
-    req.body;
+  const {
+    athlete1,
+    athlete2,
+    isPair,
+    locale,
+    athlete1Photo,
+    athlete1PhotoType,
+    athlete2Photo,
+    athlete2PhotoType,
+  } = req.body;
 
   try {
     // Helper function to get club ID - if "Open" string, find the Open club ID
@@ -494,12 +502,17 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
     const athlete1ClubName = await getClubName(athlete1ClubId);
     const athlete2ClubName = isPair ? await getClubName(athlete2ClubId) : null;
 
-    // Convert base64 image to Buffer if provided
-    let photoBuffer = null;
-    if (teamPhoto) {
-      // Remove data URL prefix if present (e.g., "data:image/jpeg;base64,")
-      const base64Data = teamPhoto.replace(/^data:image\/\w+;base64,/, "");
-      photoBuffer = Buffer.from(base64Data, "base64");
+    // Convert base64 images to Buffer if provided
+    let athlete1PhotoBuffer = null;
+    if (athlete1Photo) {
+      const base64Data = athlete1Photo.replace(/^data:image\/\w+;base64,/, "");
+      athlete1PhotoBuffer = Buffer.from(base64Data, "base64");
+    }
+
+    let athlete2PhotoBuffer = null;
+    if (isPair && athlete2Photo) {
+      const base64Data = athlete2Photo.replace(/^data:image\/\w+;base64,/, "");
+      athlete2PhotoBuffer = Buffer.from(base64Data, "base64");
     }
 
     // Calculate the auto-fields
@@ -521,14 +534,13 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
       `INSERT INTO registrations (
         athlete1_last_name, athlete1_first_name, athlete1_birth_date,
         athlete1_club_id, athlete1_nationality, athlete1_gender,
-        athlete1_email, athlete1_phone,
+        athlete1_email, athlete1_phone, athlete1_photo, athlete1_photo_type,
         is_pair,
         athlete2_last_name, athlete2_first_name, athlete2_birth_date,
         athlete2_club_id, athlete2_nationality, athlete2_gender,
-        athlete2_email, athlete2_phone,
-        locale, team_photo, team_photo_type,
-        etranger, mosaique, mixte
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        athlete2_email, athlete2_phone, athlete2_photo, athlete2_photo_type,
+        locale, etranger, mosaique, mixte
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         athlete1.lastName,
         athlete1.firstName,
@@ -538,6 +550,8 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
         athlete1.gender,
         athlete1.email,
         athlete1.phone,
+        athlete1PhotoBuffer,
+        athlete1PhotoType || null,
         isPair,
         isPair ? athlete2.lastName : null,
         isPair ? athlete2.firstName : null,
@@ -547,9 +561,9 @@ app.post("/api/registrations", registrationValidation, async (req, res) => {
         isPair ? athlete2.gender : null,
         isPair ? athlete2.email : null,
         isPair ? athlete2.phone : null,
+        athlete2PhotoBuffer,
+        athlete2PhotoType || null,
         locale || "fr",
-        photoBuffer,
-        teamPhotoType || null,
         etranger,
         mosaique,
         mixte,
@@ -588,12 +602,13 @@ app.get("/api/admin/registrations", authenticateAdmin, async (req, res) => {
              r.athlete1_last_name, r.athlete1_first_name, r.athlete1_birth_date,
              r.athlete1_club_id, r.athlete1_nationality, r.athlete1_gender,
              r.athlete1_email, r.athlete1_phone,
+             r.athlete1_photo, r.athlete1_photo_type,
              r.is_pair,
              r.athlete2_last_name, r.athlete2_first_name, r.athlete2_birth_date,
              r.athlete2_club_id, r.athlete2_nationality, r.athlete2_gender,
              r.athlete2_email, r.athlete2_phone,
-             r.locale, r.team_photo, r.team_photo_type,
-             r.mixte, r.mosaique, r.etranger,
+             r.athlete2_photo, r.athlete2_photo_type,
+             r.locale, r.mixte, r.mosaique, r.etranger,
              c1.name as athlete1_club_name,
              c2.name as athlete2_club_name
       FROM registrations r
@@ -602,11 +617,14 @@ app.get("/api/admin/registrations", authenticateAdmin, async (req, res) => {
       ORDER BY r.registration_date DESC
     `);
 
-    // Convert team_photo buffer to base64 for frontend display
+    // Convert photo buffers to base64 for frontend display
     const rowsWithBase64 = rows.map((row) => ({
       ...row,
-      team_photo: row.team_photo
-        ? `data:${row.team_photo_type || "image/jpeg"};base64,${row.team_photo.toString("base64")}`
+      athlete1_photo: row.athlete1_photo
+        ? `data:${row.athlete1_photo_type || "image/jpeg"};base64,${row.athlete1_photo.toString("base64")}`
+        : null,
+      athlete2_photo: row.athlete2_photo
+        ? `data:${row.athlete2_photo_type || "image/jpeg"};base64,${row.athlete2_photo.toString("base64")}`
         : null,
     }));
 
