@@ -3,22 +3,14 @@ const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 const mysql = require("mysql2/promise");
-const nodemailer = require("nodemailer");
+const { Resend } = require("resend");
 const { body, validationResult } = require("express-validator");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Email transporter configuration
-const transporter = nodemailer.createTransport({
-  host: "smtp.hostinger.com",
-  port: 465,
-  secure: true,
-  auth: {
-    user: "contact@cpss-poissondavril.com",
-    pass: process.env.EMAIL_PASSWORD || "MonCtt-123",
-  },
-});
+// Resend configuration
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Email template for confirmation
 const getConfirmationEmailHtml = (athlete, isPair, partner, locale) => {
@@ -102,18 +94,21 @@ const getConfirmationEmailHtml = (athlete, isPair, partner, locale) => {
 const sendConfirmationEmail = async (athlete, isPair, partner, locale) => {
   const isFrench = locale === "fr";
 
-  const mailOptions = {
-    from: '"Poisson d\'Avril - CPSS" <contact@cpss-poissondavril.com>',
-    to: athlete.email,
-    subject: isFrench
-      ? "Confirmation d'inscription au Poisson d'Avril 9ème édition"
-      : "Registration Confirmation - Poisson d'Avril 9th Edition",
-    html: getConfirmationEmailHtml(athlete, isPair, partner, locale),
-  };
-
   try {
-    await transporter.sendMail(mailOptions);
-    console.log(`Confirmation email sent to ${athlete.email}`);
+    const { data, error } = await resend.emails.send({
+      from: "Poisson d'Avril - CPSS <onboarding@resend.dev>",
+      to: athlete.email,
+      subject: isFrench
+        ? "Confirmation d'inscription au Poisson d'Avril 9ème édition"
+        : "Registration Confirmation - Poisson d'Avril 9th Edition",
+      html: getConfirmationEmailHtml(athlete, isPair, partner, locale),
+    });
+
+    if (error) {
+      console.error(`Failed to send email to ${athlete.email}:`, error);
+    } else {
+      console.log(`Confirmation email sent to ${athlete.email}`, data);
+    }
   } catch (error) {
     console.error(`Failed to send email to ${athlete.email}:`, error);
     // Don't throw - we don't want to fail the registration if email fails
