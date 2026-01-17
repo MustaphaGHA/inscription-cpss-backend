@@ -419,8 +419,8 @@ app.get("/api/admin/registrations", authenticateAdmin, async (req, res) => {
              r.athlete2_last_name, r.athlete2_first_name, r.athlete2_birth_date,
              r.athlete2_club_id, r.athlete2_nationality, r.athlete2_gender,
              r.athlete2_email, r.athlete2_phone,
-             r.locale, r.team_photo_type,
-             r.mixte, r.mosaique,
+             r.locale, r.team_photo, r.team_photo_type,
+             r.mixte, r.mosaique, r.etranger,
              c1.name as athlete1_club_name,
              c2.name as athlete2_club_name
       FROM registrations r
@@ -428,7 +428,14 @@ app.get("/api/admin/registrations", authenticateAdmin, async (req, res) => {
       LEFT JOIN clubs c2 ON r.athlete2_club_id = c2.id
       ORDER BY r.registration_date DESC
     `);
-    res.json(rows);
+    
+    // Convert team_photo buffer to base64 for frontend display
+    const rowsWithBase64 = rows.map(row => ({
+      ...row,
+      team_photo: row.team_photo ? `data:${row.team_photo_type || 'image/jpeg'};base64,${row.team_photo.toString('base64')}` : null
+    }));
+    
+    res.json(rowsWithBase64);
   } catch (error) {
     console.error("Error fetching registrations:", error);
     res.status(500).json({ error: "Failed to fetch registrations" });

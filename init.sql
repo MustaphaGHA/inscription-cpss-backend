@@ -56,3 +56,10 @@ INSERT IGNORE INTO clubs (name) VALUES
 CREATE INDEX idx_registrations_email ON registrations(athlete1_email);
 CREATE INDEX idx_registrations_status ON registrations(status);
 CREATE INDEX idx_registrations_date ON registrations(registration_date);
+
+-- Check and add columns one by one
+-- Run each statement separately
+
+ALTER TABLE registrations ADD COLUMN mixte BOOLEAN DEFAULT NULL;
+ALTER TABLE registrations ADD COLUMN mosaique BOOLEAN DEFAULT NULL;
+ALTER TABLE registrations ADD COLUMN etranger BOOLEAN DEFAULT NULL;
