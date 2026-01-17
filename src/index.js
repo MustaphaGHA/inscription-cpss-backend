@@ -74,8 +74,8 @@ const getConfirmationEmailHtml = (athlete, isPair, partner, locale) => {
           
           <p>${
             isFrench
-              ? "Les tickets seront disponibles chez nos points de vente publiés sur notre page Facebook."
-              : "Tickets will be available at our points of sale published on our Facebook page."
+              ? "Les tickets seront disponibles chez nos partenaires de vente publiés sur notre site et notre page Facebook."
+              : "Tickets will be available at our partners of sale published on our website and Facebook page."
           }</p>
           
           <p>${
